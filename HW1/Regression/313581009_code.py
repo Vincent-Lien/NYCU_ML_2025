@@ -29,7 +29,7 @@ def linear_regression_train(x_train, y_train, lr=1e-3, iterations=7000):
     loss = np.zeros(iterations)
 
     for i in range(iterations):
-        y_pred = None  # Compute predicted values
+        y_pred = weight[0] + weight[1] * x_train[i]  # Compute predicted values
 
         loss[i] = None  # Compute MSE
 
@@ -46,8 +46,8 @@ def linear_regression_train(x_train, y_train, lr=1e-3, iterations=7000):
 weight_standard, loss_standard = linear_regression_train(train_data, y_train)
 
 print("\n=== Standard Linear Regression Parameters ===")
-print(f'Weight (m): {None}')  # Print weight[0]
-print(f'Bias (b): {None}')  # Print weight[1]
+print(f'Weight (m): {weight_standard[0]}')  # Print weight[0]
+print(f'Bias (b): {weight_standard[1]}')  # Print weight[1]
 
 # ==============================
 # Task 2: Compute MSE
@@ -59,7 +59,7 @@ y_pred_standard = None  # Compute predictions for test data
 mse_standard = compute_mse(y_test, y_pred_standard)
 
 print("\n=== Mean Squared Error (Standard Regression) ===")
-print(f'MSE: {None}')
+print(f'MSE: {mse_standard}')
 
 # ==============================
 # Task 3: Ridge Regression (Gradient Descent)
@@ -86,14 +86,14 @@ def ridge_regression_train(x_train, y_train, lr=1e-3, iterations=7000, lambda_re
 weight_ridge, loss_ridge = ridge_regression_train(train_data, y_train)
 
 print("\n=== Ridge Regression Parameters ===")
-print(f'Weight (m): {None}')
-print(f'Bias (b): {None}')
+print(f'Weight (m): {weight_ridge[0]}')
+print(f'Bias (b): {weight_ridge[1]}')
 
 y_pred_ridge = None  # Compute predictions for test data
 mse_ridge = compute_mse(y_test, y_pred_ridge)
 
 print("\n=== Mean Squared Error (Ridge Regression) ===")
-print(f'MSE: {None}')
+print(f'MSE: {mse_ridge}')
 
 # ==============================
 # Task 4: Plot Loss Curve
@@ -112,10 +112,10 @@ y_pred_closed_form = None  # Compute predictions for test data
 mse_closed_form = compute_mse(y_test, y_pred_closed_form)
 
 print("\n=== Closed-form Ridge Regression Parameters ===")
-print(f'Weight (m): {None}')
-print(f'Bias (b): {None}')
+print(f'Weight (m): {weight_closed_form[0]}')
+print(f'Bias (b): {weight_closed_form[1]}')
 print("\n=== Mean Squared Error (Closed-form Ridge Regression) ===")
-print(f'MSE: {None}')
+print(f'MSE: {mse_closed_form}')
 
 # ==============================
 # Task 6: Predictive Distribution
@@ -124,8 +124,8 @@ predictive_mean = None  # Compute predictive mean
 predictive_variance = None  # Compute predictive variance
 
 print("\n=== Predictive Distribution ===")
-print(f'Predictive Mean (first 5 values): {None}')
-print(f'Predictive Variance: {None}')
+print(f'Predictive Mean (first 5 values): {predictive_mean[:5]}')
+print(f'Predictive Variance: {predictive_variance}')
 
 
 # ==============================
