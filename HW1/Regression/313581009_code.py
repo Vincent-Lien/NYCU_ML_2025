@@ -34,12 +34,12 @@ def linear_regression_train(x_train, y_train, lr=1e-3, iterations=7000):
         loss[i] = np.mean((y_pred - y_train) ** 2) # Compute MSE
 
         # Compute gradients
-        m_gradient = None  # Compute gradient for weight
-        b_gradient = None  # Compute gradient for bias
+        m_gradient = (2 / x_train.shape[0]) * ((y_pred - y_train) @ x_train[:, 0])  # Compute gradient for weight
+        b_gradient = (2 / x_train.shape[0]) * np.sum(y_pred - y_train)  # Compute gradient for bias
 
         # Update weights
-        weight[0] -= None  # Apply gradient descent for weight
-        weight[1] -= None  # Apply gradient descent for bias
+        weight[0] -= lr * m_gradient  # Apply gradient descent for weight
+        weight[1] -= lr * b_gradient  # Apply gradient descent for bias
 
     return weight, loss
 
@@ -53,9 +53,9 @@ print(f'Bias (b): {weight_standard[1]}')  # Print weight[1]
 # Task 2: Compute MSE
 # ==============================
 def compute_mse(y_true, y_pred):
-    return None  # Compute MSE formula
+    return np.mean((y_true - y_pred) ** 2)  # Compute MSE formula
 
-y_pred_standard = None  # Compute predictions for test data
+y_pred_standard = train_data @ weight_standard  # Compute predictions for test data
 mse_standard = compute_mse(y_test, y_pred_standard)
 
 print("\n=== Mean Squared Error (Standard Regression) ===")
@@ -69,17 +69,17 @@ def ridge_regression_train(x_train, y_train, lr=1e-3, iterations=7000, lambda_re
     loss = np.zeros(iterations)
 
     for i in range(iterations):
-        y_pred = None  # Compute predicted values
+        y_pred = x_train @ weight  # Compute predicted values
 
-        loss[i] = None  # Compute MSE with regularization term
+        loss[i] = np.mean((y_pred - y_train) ** 2) + lambda_reg * np.sum(weight ** 2)  # Compute MSE with regularization term
 
         # Compute gradients with regularization
-        m_gradient = None  # Compute weight gradient with regularization
-        b_gradient = None  # Compute bias gradient
+        m_gradient = (2 / x_train.shape[0]) * ((y_pred - y_train) @ x_train[:, 0]) + 2 * lambda_reg * weight[0]  # Compute weight gradient with regularization
+        b_gradient = (2 / x_train.shape[0]) * np.sum(y_pred - y_train) + 2 * lambda_reg * weight[1]  # Compute bias gradient
 
         # Update weights
-        weight[0] -= None  # Apply gradient descent for weight
-        weight[1] -= None  # Apply gradient descent for bias
+        weight[0] -= lr * m_gradient  # Apply gradient descent for weight
+        weight[1] -= lr * b_gradient  # Apply gradient descent for bias
 
     return weight, loss
 
