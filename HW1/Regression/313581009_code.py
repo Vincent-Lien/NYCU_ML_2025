@@ -29,9 +29,9 @@ def linear_regression_train(x_train, y_train, lr=1e-3, iterations=7000):
     loss = np.zeros(iterations)
 
     for i in range(iterations):
-        y_pred = weight[0] + weight[1] * x_train[i]  # Compute predicted values
+        y_pred = x_train @ weight # Compute predicted values
 
-        loss[i] = None  # Compute MSE
+        loss[i] = np.mean((y_pred - y_train) ** 2) # Compute MSE
 
         # Compute gradients
         m_gradient = None  # Compute gradient for weight
