@@ -9,6 +9,7 @@ Original file is located at
 
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 
 # Load dataset
 x_train, x_test, y_train, y_test = np.load('regression_data.npy', allow_pickle=True)
@@ -55,7 +56,7 @@ print(f'Bias (b): {weight_standard[1]}')  # Print weight[1]
 def compute_mse(y_true, y_pred):
     return np.mean((y_true - y_pred) ** 2)  # Compute MSE formula
 
-y_pred_standard = train_data @ weight_standard  # Compute predictions for test data
+y_pred_standard = test_data @ weight_standard  # Compute predictions for test data
 mse_standard = compute_mse(y_test, y_pred_standard)
 
 print("\n=== Mean Squared Error (Standard Regression) ===")
@@ -89,7 +90,7 @@ print("\n=== Ridge Regression Parameters ===")
 print(f'Weight (m): {weight_ridge[0]}')
 print(f'Bias (b): {weight_ridge[1]}')
 
-y_pred_ridge = None  # Compute predictions for test data
+y_pred_ridge = test_data @ weight_ridge  # Compute predictions for test data
 mse_ridge = compute_mse(y_test, y_pred_ridge)
 
 print("\n=== Mean Squared Error (Ridge Regression) ===")
@@ -98,6 +99,19 @@ print(f'MSE: {mse_ridge}')
 # ==============================
 # Task 4: Plot Loss Curve
 # ==============================
+
+# Create directory for plots if it doesn't exist
+os.makedirs('plots', exist_ok=True)
+
+plt.figure(figsize=(10, 6))
+plt.plot(loss_standard, label='Standard Regression')
+plt.plot(loss_ridge, label='Ridge Regression')
+plt.title('Training Loss Curve')
+plt.xlabel('Iterations')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid()
+plt.savefig('plots/loss_curve.png')
 
 # ==============================
 # Task 5: Closed-form Ridge Regression
@@ -108,7 +122,7 @@ def closed_form_ridge(x_train, y_train, lambda_reg=0.1):
     return w_closed_form
 
 weight_closed_form = closed_form_ridge(train_data, y_train)
-y_pred_closed_form = None  # Compute predictions for test data
+y_pred_closed_form = test_data @ weight_closed_form  # Compute predictions for test data
 mse_closed_form = compute_mse(y_test, y_pred_closed_form)
 
 print("\n=== Closed-form Ridge Regression Parameters ===")
