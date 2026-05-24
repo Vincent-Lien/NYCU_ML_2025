@@ -102,6 +102,11 @@ NORMALIZE = transforms.Normalize(
 
 train_transform = transforms.Compose([
     # TODO: add your transforms here
+    transforms.RandomResizedCrop(IMAGE_SIZE),
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+    transforms.ToTensor(),
+    NORMALIZE,
 ])
 
 # TODO: Define val_transform (no random augmentation — just resize, crop, normalize).
@@ -113,6 +118,10 @@ train_transform = transforms.Compose([
 
 val_transform = transforms.Compose([
     # TODO: add your transforms here
+    transforms.Resize(IMAGE_SIZE + 32),
+    transforms.CenterCrop(IMAGE_SIZE),
+    transforms.ToTensor(),
+    NORMALIZE
 ])
 
 
@@ -257,15 +266,48 @@ class FlatTestDataset(Dataset):
 #   Hint: you are free to use a simpler architecture (plain CNN without residuals)
 #   if you prefer, but residual connections generally train faster and more stably.
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
+        self.bn1   = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1, bias=False)
+        self.bn2   = nn.BatchNorm2d(out_channels)
+        self.skip  = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
+            nn.BatchNorm2d(out_channels)
+        ) if (stride != 1 or in_channels != out_channels) else nn.Identity()
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return F.relu(out + self.skip(x))
+
 class ImageEncoder(nn.Module):
     def __init__(self):
         super().__init__()
         # TODO: define your layers here
-        pass
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(3, stride=2, padding=1)
+        )
+        self.stage1 = nn.Sequential(ResidualBlock(64, 64),   ResidualBlock(64, 64))
+        self.stage2 = nn.Sequential(ResidualBlock(64, 128, stride=2),  ResidualBlock(128, 128))
+        self.stage3 = nn.Sequential(ResidualBlock(128, 256, stride=2), ResidualBlock(256, 256))
+        self.stage4 = nn.Sequential(ResidualBlock(256, 512, stride=2), ResidualBlock(512, 512))
+        self.pool   = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # TODO: pass x through your layers and return (B, IMG_DIM)
-        pass
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        x = self.pool(x)
+        return x.flatten(1)
 
 
 # ── 6B: Text Encoder ───────────────────────────────────────────────────────────
@@ -290,7 +332,9 @@ class TextEncoder(nn.Module):
     def __init__(self, vocab_size: int):
         super().__init__()
         # TODO: define Embedding layer and LSTM here
-        pass
+        self.embedding = nn.Embedding(vocab_size, TXT_DIM, padding_idx=0)
+        self.lstm      = nn.LSTM(TXT_DIM, TXT_DIM, num_layers=2,
+                                 batch_first=True, bidirectional=True)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
         # token_ids: (B, MAX_LEN)
@@ -301,7 +345,11 @@ class TextEncoder(nn.Module):
         #   4. Masked mean:          feat = (out * mask.unsqueeze(-1)).sum(1)
         #                                   / mask.sum(1, keepdim=True).clamp(min=1)
         #   5. Return feat:          (B, TXT_DIM * 2)
-        pass
+        mask = (token_ids != 0).unsqueeze(-1).float()        # (B, MAX_LEN, 1)
+        emb  = self.embedding(token_ids)                     # (B, MAX_LEN, TXT_DIM)
+        out, _ = self.lstm(emb)                              # (B, MAX_LEN, TXT_DIM*2)
+        feat = (out * mask).sum(1) / mask.sum(1).clamp(min=1)
+        return feat                                          # (B, TXT_DIM*2)
 
 
 # ── 6C: Multimodal Classifier ──────────────────────────────────────────────────
@@ -363,7 +411,17 @@ def train_one_epoch(model, loader, criterion, optimizer):
 
     for images, token_ids, labels in tqdm(loader, desc="  train", leave=False):
         # TODO: implement training step
-        pass
+        images, token_ids, labels = images.to(DEVICE), token_ids.to(DEVICE), labels.to(DEVICE)
+
+        optimizer.zero_grad()
+        img_logits, txt_logits = model(images, token_ids)
+        loss = criterion(img_logits, labels) + TXT_WEIGHT * criterion(txt_logits, labels)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * labels.size(0)
+        correct    += (img_logits.argmax(dim=1) == labels).sum().item()
+        total      += labels.size(0)
 
     return total_loss / max(total, 1), correct / max(total, 1)
 
@@ -386,7 +444,14 @@ def val_one_epoch(model, loader, criterion):
 
     for images, token_ids, labels in loader:
         # TODO: implement validation step
-        pass
+        images, token_ids, labels = images.to(DEVICE), token_ids.to(DEVICE), labels.to(DEVICE)
+
+        img_logits, txt_logits = model(images, token_ids)
+        loss = criterion(img_logits, labels)
+
+        total_loss += loss.item() * labels.size(0)
+        correct    += (img_logits.argmax(dim=1) == labels).sum().item()
+        total      += labels.size(0)
 
     return total_loss / max(total, 1), correct / max(total, 1)
 
@@ -429,7 +494,12 @@ def generate_submission(model, vocab: dict, id_to_class: dict):
     for images, token_ids, image_ids in tqdm(loader, desc="  predicting"):
         images, token_ids = images.to(DEVICE), token_ids.to(DEVICE)
         # TODO: run model, combine scores, get predictions, append to rows
-        pass
+        img_logits, txt_logits = model(images, token_ids)
+        score    = ALPHA_IMG * F.softmax(img_logits, dim=1) + ALPHA_TXT * F.softmax(txt_logits, dim=1)
+        pred_ids = score.argmax(dim=1).cpu().tolist()
+
+        for image_id, pred_id in zip(image_ids, pred_ids):
+            rows.append([image_id + ".jpg", id_to_class[pred_id]])
 
     rows.sort(key=lambda r: r[0])
     with open(SUBMISSION_PATH, "w", newline="") as f:
@@ -471,6 +541,10 @@ def main():
     #               train_ds.targets = [folder_map[train_ds.classes[t]] for t in train_ds.targets]
     #               train_ds.samples = [(p, folder_map[train_ds.classes[t]]) for p, t in train_ds.samples]
     #             Do the same for val_ds_src.
+    folder_map = {cls: class_to_id[cls] for cls in train_ds.classes}
+    for ds in (train_ds, val_ds_src):
+        ds.targets = [folder_map[ds.classes[t]] for t in ds.targets]
+        ds.samples = [(p, folder_map[ds.classes[t]]) for p, t in ds.samples]
 
     # TODO: Split into train and validation sets.
     #       Suggestion: hold out the last 10 images per class as validation.
@@ -480,32 +554,41 @@ def main():
     #             idx = np.where(labels == cls)[0].tolist()
     #             vl_idx.extend(idx[-10:])
     #             tr_idx.extend(idx[:-10])
+    labels = np.array(train_ds.targets)
+    tr_idx, vl_idx = [], []
+    for cls in np.unique(labels):
+        idx = np.where(labels == cls)[0].tolist()
+        vl_idx.extend(idx[-10:])
+        tr_idx.extend(idx[:-10])
 
     # TODO: Wrap with MultimodalDataset to attach text tokens:
     #         train_mm = MultimodalDataset(Subset(train_ds,   tr_idx), class_tokens)
     #         val_mm   = MultimodalDataset(Subset(val_ds_src, vl_idx), class_tokens)
+    train_mm = MultimodalDataset(Subset(train_ds,   tr_idx), class_tokens)
+    val_mm   = MultimodalDataset(Subset(val_ds_src, vl_idx), class_tokens)
 
     # TODO: Create DataLoaders:
     #         train_loader = DataLoader(train_mm, batch_size=BATCH_SIZE, shuffle=True,  num_workers=2)
     #         val_loader   = DataLoader(val_mm,   batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
-    train_loader = None   # TODO: replace
-    val_loader   = None   # TODO: replace
+    train_loader = DataLoader(train_mm, batch_size=BATCH_SIZE, shuffle=True,  num_workers=2)    # TODO: replace
+    val_loader   = DataLoader(val_mm,   batch_size=BATCH_SIZE, shuffle=False, num_workers=2)    # TODO: replace
 
     print(f"  (fill in dataset sizes after completing the TODO above)\n")
 
     # ── Model, loss, optimizer ────────────────────────────────────────────────
     # TODO: Instantiate MultimodalClassifier and move to DEVICE
     #         model = MultimodalClassifier(len(vocab), num_classes).to(DEVICE)
-    model = None   # TODO: replace
+    model = MultimodalClassifier(len(vocab), num_classes).to(DEVICE)   # TODO: replace
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     # TODO: Define optimizer — optimize all model parameters
     #         optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    optimizer = None   # TODO: replace
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)   # TODO: replace
 
     # TODO (optional): Define a learning rate scheduler for better convergence
     #         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
     # ── Training loop ─────────────────────────────────────────────────────────
     best_val_acc = 0.0
@@ -518,6 +601,7 @@ def main():
         _,          val_acc   = val_one_epoch(model, val_loader, criterion)
 
         # TODO (optional): scheduler.step()
+        scheduler.step()
 
         marker = ""
         if val_acc > best_val_acc:
