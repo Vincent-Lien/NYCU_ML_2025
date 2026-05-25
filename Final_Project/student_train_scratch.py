@@ -68,7 +68,7 @@ MODEL_PATH       = Path("my_model_scratch.pth")
 
 IMAGE_SIZE   = 224
 BATCH_SIZE   = 64
-NUM_EPOCHS   = 50
+NUM_EPOCHS   = 100
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY  = 1e-4
 
@@ -221,7 +221,7 @@ class MultimodalDataset(Dataset):
                         new_tokens[i] = tokens[k_idx]
                 tokens = new_tokens
 
-        return img, self.ct[lbl], lbl
+        return img, tokens, lbl
 
 
 class FlatTestDataset(Dataset):
