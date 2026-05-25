@@ -38,6 +38,7 @@ OUTPUT:
 # SECTION 1 — IMPORTS
 # ==============================================================
 import csv
+import random
 import re
 from collections import Counter
 from pathlib import Path
@@ -73,7 +74,7 @@ WEIGHT_DECAY  = 1e-4
 
 # Output dimension of your image encoder
 # TODO: change this if your CNN outputs a different size
-IMG_DIM = 512
+IMG_DIM = 256
 
 # Output dimension of your text encoder (each direction for BiLSTM)
 # TODO: change this to match your TextEncoder output
@@ -102,8 +103,10 @@ NORMALIZE = transforms.Normalize(
 
 train_transform = transforms.Compose([
     # TODO: add your transforms here
-    transforms.RandomResizedCrop(IMAGE_SIZE),
+    transforms.RandomResizedCrop(IMAGE_SIZE, scale=(0.7, 1.0)),
     transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(degrees=15),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
     transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
     transforms.ToTensor(),
     NORMALIZE,
@@ -194,15 +197,30 @@ class MultimodalDataset(Dataset):
     Wraps an ImageFolder dataset and attaches the class text token tensor.
     Returns (image_tensor, token_ids, label).
     """
-    def __init__(self, image_dataset, class_tokens: torch.Tensor):
+    def __init__(self, image_dataset, class_tokens: torch.Tensor, is_train=True):
         self.ds = image_dataset
         self.ct = class_tokens
+        self.is_train = is_train
 
     def __len__(self):
         return len(self.ds)
 
     def __getitem__(self, idx):
         img, lbl = self.ds[idx]
+        tokens = self.ct[lbl].clone()
+
+        if self.is_train and random.random() < 0.8:
+            valid_indices = (tokens != 0).nonzero(as_tuple=True)[0].tolist()
+            if len(valid_indices) > 0:
+                num_to_keep = min(random.randint(2, 3), len(valid_indices))
+                keep_indices = random.sample(valid_indices, k=num_to_keep)
+                
+                new_tokens = torch.zeros_like(tokens)
+                for i, k_idx in enumerate(keep_indices):
+                    if i < len(new_tokens):
+                        new_tokens[i] = tokens[k_idx]
+                tokens = new_tokens
+
         return img, self.ct[lbl], lbl
 
 
@@ -288,15 +306,15 @@ class ImageEncoder(nn.Module):
         super().__init__()
         # TODO: define your layers here
         self.stem = nn.Sequential(
-            nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(3, 32, 7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(3, stride=2, padding=1)
         )
-        self.stage1 = nn.Sequential(ResidualBlock(64, 64),   ResidualBlock(64, 64))
-        self.stage2 = nn.Sequential(ResidualBlock(64, 128, stride=2),  ResidualBlock(128, 128))
-        self.stage3 = nn.Sequential(ResidualBlock(128, 256, stride=2), ResidualBlock(256, 256))
-        self.stage4 = nn.Sequential(ResidualBlock(256, 512, stride=2), ResidualBlock(512, 512))
+        self.stage1 = nn.Sequential(ResidualBlock(32, 32))
+        self.stage2 = nn.Sequential(ResidualBlock(32, 64, stride=2))
+        self.stage3 = nn.Sequential(ResidualBlock(64, 128, stride=2))
+        self.stage4 = nn.Sequential(ResidualBlock(128, 256, stride=2))
         self.pool   = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -481,8 +499,8 @@ def generate_submission(model, vocab: dict, id_to_class: dict):
       5. Collect rows: [image_id + ".jpg", class_name]
       6. Sort by filename and write to SUBMISSION_PATH with header ["filename", "label"]
     """
-    ALPHA_IMG = 0.7   # TODO: tune this balance between image and recipe signal
-    ALPHA_TXT = 0.3
+    ALPHA_IMG = 0.5   # TODO: tune this balance between image and recipe signal
+    ALPHA_TXT = 0.5
 
     model.eval()
     loader = DataLoader(
@@ -564,8 +582,8 @@ def main():
     # TODO: Wrap with MultimodalDataset to attach text tokens:
     #         train_mm = MultimodalDataset(Subset(train_ds,   tr_idx), class_tokens)
     #         val_mm   = MultimodalDataset(Subset(val_ds_src, vl_idx), class_tokens)
-    train_mm = MultimodalDataset(Subset(train_ds,   tr_idx), class_tokens)
-    val_mm   = MultimodalDataset(Subset(val_ds_src, vl_idx), class_tokens)
+    train_mm = MultimodalDataset(Subset(train_ds,   tr_idx), class_tokens, is_train=True)
+    val_mm   = MultimodalDataset(Subset(val_ds_src, vl_idx), class_tokens, is_train=False)
 
     # TODO: Create DataLoaders:
     #         train_loader = DataLoader(train_mm, batch_size=BATCH_SIZE, shuffle=True,  num_workers=2)
