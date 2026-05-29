@@ -211,7 +211,7 @@ class MultimodalDataset(Dataset):
         img, lbl = self.ds[idx]
         tokens = self.ct[lbl].clone()
 
-        if self.is_train and random.random() < 0.5:  # 降低觸發機率
+        if self.is_train:
             valid_indices = (tokens != 0).nonzero(as_tuple=True)[0].tolist()
             if len(valid_indices) > 0:
                 num_to_keep = random.randint(1, min(3, len(valid_indices)))
