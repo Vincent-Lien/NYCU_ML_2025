@@ -52,6 +52,8 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from PIL import Image
 from tqdm import tqdm
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="enable_nested_tensor")
 
 
 # ==============================================================
@@ -67,10 +69,10 @@ SUBMISSION_PATH  = Path("submission.csv")
 MODEL_PATH       = Path("my_model_scratch.pth")
 
 IMAGE_SIZE   = 224
-BATCH_SIZE   = 64
+BATCH_SIZE   = 32
 NUM_EPOCHS   = 100
-LEARNING_RATE = 1e-3
-WEIGHT_DECAY  = 1e-4
+LEARNING_RATE = 5e-4
+WEIGHT_DECAY  = 1e-5
 
 # Output dimension of your image encoder
 # TODO: change this if your CNN outputs a different size
@@ -78,7 +80,7 @@ IMG_DIM = 256
 
 # Output dimension of your text encoder (each direction for BiLSTM)
 # TODO: change this to match your TextEncoder output
-TXT_DIM = 256
+TXT_DIM = 128
 
 MAX_LEN = 64        # maximum number of words to read from a text description
 
@@ -126,6 +128,27 @@ val_transform = transforms.Compose([
     transforms.ToTensor(),
     NORMALIZE
 ])
+
+# TTA: 8 deterministic transforms applied at inference time
+TTA_TRANSFORMS = [
+    # 1. center crop (same as val)
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.CenterCrop(IMAGE_SIZE), transforms.ToTensor(), NORMALIZE]),
+    # 2. top-left crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.FiveCrop(IMAGE_SIZE), transforms.Lambda(lambda crops: crops[0]), transforms.ToTensor(), NORMALIZE]),
+    # 3. top-right crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.FiveCrop(IMAGE_SIZE), transforms.Lambda(lambda crops: crops[1]), transforms.ToTensor(), NORMALIZE]),
+    # 4. bottom-left crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.FiveCrop(IMAGE_SIZE), transforms.Lambda(lambda crops: crops[2]), transforms.ToTensor(), NORMALIZE]),
+    # 5. bottom-right crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.FiveCrop(IMAGE_SIZE), transforms.Lambda(lambda crops: crops[3]), transforms.ToTensor(), NORMALIZE]),
+    # 6. horizontal flip + center crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 32), transforms.CenterCrop(IMAGE_SIZE), transforms.RandomHorizontalFlip(p=1.0), transforms.ToTensor(), NORMALIZE]),
+    # 7. slightly larger crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 64), transforms.CenterCrop(IMAGE_SIZE), transforms.ToTensor(), NORMALIZE]),
+    # 8. horizontal flip + slightly larger crop
+    transforms.Compose([transforms.Resize(IMAGE_SIZE + 64), transforms.CenterCrop(IMAGE_SIZE), transforms.RandomHorizontalFlip(p=1.0), transforms.ToTensor(), NORMALIZE]),
+]
+TTA_N = len(TTA_TRANSFORMS)
 
 
 # ==============================================================
@@ -209,7 +232,7 @@ class MultimodalDataset(Dataset):
         img, lbl = self.ds[idx]
         tokens = self.ct[lbl].clone()
 
-        if self.is_train and random.random() < 0.5:  # 降低觸發機率
+        if self.is_train:
             valid_indices = (tokens != 0).nonzero(as_tuple=True)[0].tolist()
             if len(valid_indices) > 0:
                 num_to_keep = random.randint(1, min(3, len(valid_indices)))
@@ -345,31 +368,66 @@ class ImageEncoder(nn.Module):
 #     Masked mean pooling ignores them: sum(outputs * mask) / sum(mask).
 
 class TextEncoder(nn.Module):
-    def __init__(self, vocab_size: int):
+    def __init__(self, vocab_size: int,
+                 d_model: int = 128,
+                 nhead: int = 4,
+                 num_layers: int = 2,
+                 dropout: float = 0.2):
         super().__init__()
-        # TODO: define Embedding layer and LSTM here
-        self.embedding = nn.Embedding(vocab_size, TXT_DIM, padding_idx=0)
-        self.proj = nn.Sequential(
-            nn.Linear(TXT_DIM, TXT_DIM * 2),
-            nn.LayerNorm(TXT_DIM * 2),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(TXT_DIM * 2, TXT_DIM * 2),
+        self.d_model = d_model
+
+        # [CLS] token embedding，學一個可訓練的 class token
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
+
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=0)
+
+        # Positional encoding（ingredients 無序，但加了不會壞）
+        self.pos_embedding = nn.Embedding(MAX_LEN + 1, d_model)  # +1 for CLS
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=d_model * 4,
+            dropout=dropout,
+            batch_first=True,          # (B, L, D) 格式
+            norm_first=True,           # Pre-LN，訓練更穩定
         )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.norm = nn.LayerNorm(d_model)
+
+        # 輸出投影到 TXT_DIM * 2，維持跟原本介面一致
+        self.proj = nn.Linear(d_model, TXT_DIM * 2)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        # token_ids: (B, MAX_LEN)
-        # TODO:
-        #   1. Build a padding mask: mask = (token_ids != 0)  →  (B, MAX_LEN)
-        #   2. Embed tokens:         emb  = self.embedding(token_ids)
-        #   3. Pass through LSTM:    out, _ = self.lstm(emb)   → (B, MAX_LEN, TXT_DIM*2)
-        #   4. Masked mean:          feat = (out * mask.unsqueeze(-1)).sum(1)
-        #                                   / mask.sum(1, keepdim=True).clamp(min=1)
-        #   5. Return feat:          (B, TXT_DIM * 2)
-        mask = (token_ids != 0).unsqueeze(-1).float()
-        emb  = self.embedding(token_ids)
-        feat = (emb * mask).sum(1) / mask.sum(1).clamp(min=1)
-        return self.proj(feat)
+        B, L = token_ids.shape
+
+        # 1. Embedding
+        x = self.embedding(token_ids)                        # (B, L, d_model)
+
+        # 2. Positional encoding（position 0 留給 CLS）
+        positions = torch.arange(1, L + 1, device=token_ids.device)
+        x = x + self.pos_embedding(positions).unsqueeze(0)  # (B, L, d_model)
+
+        # 3. 在最前面插入 [CLS] token
+        cls = self.cls_token.expand(B, -1, -1)               # (B, 1, d_model)
+        x = torch.cat([cls, x], dim=1)                       # (B, L+1, d_model)
+
+        # 4. Padding mask（True = 忽略該位置）
+        #    CLS 永遠不 mask，padding token 才 mask
+        pad_mask = torch.cat([
+            torch.zeros(B, 1, dtype=torch.bool, device=token_ids.device),  # CLS
+            (token_ids == 0),                                                # padding
+        ], dim=1)                                             # (B, L+1)
+
+        # 5. Transformer
+        out = self.transformer(x, src_key_padding_mask=pad_mask)  # (B, L+1, d_model)
+        out = self.norm(out)
+
+        # 6. 取 [CLS] 位置的輸出作為 sentence embedding
+        cls_feat = out[:, 0, :]                               # (B, d_model)
+
+        return self.proj(cls_feat)                            # (B, TXT_DIM*2)
 
 
 # ── 6C: Multimodal Classifier ──────────────────────────────────────────────────
@@ -482,46 +540,43 @@ def val_one_epoch(model, loader, criterion):
 
 @torch.no_grad()
 def generate_submission(model, vocab: dict, id_to_class: dict):
-    """
-    TODO: Run inference on all test images and save submission.csv.
-
-    Each test image now has a matching recipe from test_recipes.csv.
-    Your model should use BOTH the image and the recipe to make each prediction.
-
-    Steps:
-      1. Create FlatTestDataset(TEST_DIR, TEST_RECIPES_CSV, vocab, val_transform)
-         → each item is (image_tensor, token_ids, image_id)
-      2. For each batch:
-           img_logits, txt_logits = model(images, token_ids)
-      3. Combine image and text scores:
-           score = ALPHA_IMG * softmax(img_logits) + ALPHA_TXT * softmax(txt_logits)
-           pred_ids = score.argmax(dim=1)
-           (ALPHA_IMG=0.7, ALPHA_TXT=0.3 is a reasonable starting point)
-      4. Convert pred_ids → class names using id_to_class
-      5. Collect rows: [image_id + ".jpg", class_name]
-      6. Sort by filename and write to SUBMISSION_PATH with header ["filename", "label"]
-    """
-    ALPHA_IMG = 0.5   # TODO: tune this balance between image and recipe signal
+    ALPHA_IMG = 0.5
     ALPHA_TXT = 0.5
 
     model.eval()
-    loader = DataLoader(
-        FlatTestDataset(TEST_DIR, TEST_RECIPES_CSV, vocab, val_transform),
-        batch_size=BATCH_SIZE, shuffle=False, num_workers=2,
-    )
 
-    rows = []
-    for images, token_ids, image_ids in tqdm(loader, desc="  predicting"):
-        images, token_ids = images.to(DEVICE), token_ids.to(DEVICE)
-        # TODO: run model, combine scores, get predictions, append to rows
-        img_logits, txt_logits = model(images, token_ids)
-        score    = ALPHA_IMG * F.softmax(img_logits, dim=1) + ALPHA_TXT * F.softmax(txt_logits, dim=1)
-        pred_ids = score.argmax(dim=1).cpu().tolist()
+    # Build one dataset per TTA transform, all sharing the same token tensors
+    base_ds = FlatTestDataset(TEST_DIR, TEST_RECIPES_CSV, vocab, transform=None)
+    n = len(base_ds)
 
-        for image_id, pred_id in zip(image_ids, pred_ids):
-            rows.append([image_id + ".jpg", id_to_class[pred_id]])
+    # Accumulate softmax scores across all TTA passes: shape (n, num_classes)
+    num_classes = len(id_to_class)
+    accum_scores = torch.zeros(n, num_classes)  # stays on CPU
 
+    for t_idx, tfm in enumerate(TTA_TRANSFORMS):
+        # Temporarily swap transform
+        base_ds.transform = tfm
+        loader = DataLoader(base_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
+
+        offset = 0
+        for images, token_ids, _ in tqdm(loader, desc=f"  TTA {t_idx+1}/{TTA_N}", leave=False):
+            images, token_ids = images.to(DEVICE), token_ids.to(DEVICE)
+            img_logits, txt_logits = model(images, token_ids)
+            score = (ALPHA_IMG * F.softmax(img_logits, dim=1)
+                   + ALPHA_TXT * F.softmax(txt_logits, dim=1)).cpu()
+            bs = score.size(0)
+            accum_scores[offset:offset + bs] += score
+            offset += bs
+
+    # Final prediction: argmax of averaged scores
+    pred_ids = accum_scores.argmax(dim=1).tolist()
+
+    # Collect image ids in order
+    image_ids = [p.stem for p in base_ds.paths]
+    rows = [[img_id + ".jpg", id_to_class[pred_id]]
+            for img_id, pred_id in zip(image_ids, pred_ids)]
     rows.sort(key=lambda r: r[0])
+
     with open(SUBMISSION_PATH, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["filename", "label"])
