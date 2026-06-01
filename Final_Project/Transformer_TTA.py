@@ -52,6 +52,7 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from PIL import Image
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, message="enable_nested_tensor")
 
@@ -666,6 +667,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS)
 
     # ── Training loop ─────────────────────────────────────────────────────────
+    train_losses, train_accs, val_accs = [], [], []
     best_val_acc = 0.0
     print(f"  Training for {NUM_EPOCHS} epochs...")
     print(f"  {'Epoch':<8} {'Loss':<10} {'Train Acc':<13} {'Val Acc'}")
@@ -685,9 +687,21 @@ def main():
             marker = " ✓"
 
         print(f"  {epoch:02d}/{NUM_EPOCHS}   {train_loss:.4f}     {train_acc:.3f}         {val_acc:.3f}{marker}")
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_accs.append(val_acc)
 
     print(f"\n  Best val accuracy : {best_val_acc:.1%}")
     print(f"  Best model saved  → {MODEL_PATH}")
+    
+    epochs = range(1, len(train_losses) + 1)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    ax1.plot(epochs, train_losses, label='train')
+    ax1.set_title('Loss'); ax1.legend()
+    ax2.plot(epochs, train_accs, label='train'); ax2.plot(epochs, val_accs, label='val')
+    ax2.set_title('Accuracy'); ax2.legend()
+    plt.tight_layout()
+    plt.savefig('training_curve.png', dpi=150)
 
     # ── Inference ─────────────────────────────────────────────────────────────
     print(f"\n  Running inference on test set...")
