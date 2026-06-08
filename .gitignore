@@ -2,3 +2,8 @@ ML-Labs/
 .vscode/
 HW3/dataset/
 HW3/dataset_split
+Final_Project/train/
+Final_Project/test/
+.env
+Final_Project/Data_Labeler/dataset/
+AutoTest/
