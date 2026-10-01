@@ -1,5 +1,8 @@
 # NYCU Machine Learning: Homework and Final Project
 
+>國立陽明交通大學 114學年度下學期  
+電控工程研究所 機器學習 林顯易教授  
+
 Coursework for the Machine Learning course at National Yang Ming Chiao Tung University (Spring 2026, Prof. Hsien-I Lin). The course follows *Deep Learning: Foundations and Concepts* (Bishop & Bishop, 2024), and equation and algorithm numbers in the code refer to that book.
 
 The repository contains four homework assignments and an individual final project. Each folder includes the original assignment handout as a PDF.
