@@ -318,8 +318,8 @@ avg_loss, correct, total, accuracy = evaluate(model, test_loader, test_loss_hist
 print(f'\nAverage test loss: {avg_loss:.4f}  Accuracy: {correct}/{total} ({accuracy:.2f}%)\n')
 
 # TODO 9: Save trained model
-torch.save(model.state_dict(), '313581009.pth')
-print("Model saved as 313581009.pth")
+torch.save(model.state_dict(), 'vit.pth')
+print("Model saved as vit.pth")
 
 # ==========================================
 # STEP 6: VISUALIZATION (Requirement c & d)

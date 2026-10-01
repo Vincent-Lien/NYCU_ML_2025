@@ -38,7 +38,7 @@ transform = transforms.Compose([
 mnist_train  = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 fmnist_train = datasets.FashionMNIST(root='./data', train=True, download=True, transform=transform)
 
-target_classes  = [9, 0, 1]     # 313581009
+target_classes  = [9, 0, 1]     # first 3 distinct digits of the student ID, read right to left
 mnist_indices   = [i for i, (_, label) in enumerate(mnist_train)  if label in target_classes]
 fmnist_indices  = [i for i, (_, label) in enumerate(fmnist_train) if label in target_classes]
 
